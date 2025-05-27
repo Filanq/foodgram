@@ -3,6 +3,7 @@ services:
   frontend:
     container_name: foodgram-front
     build: ../frontend
+    command: npm run build
     volumes:
       - ../frontend/:/app/frontend/
   nginx:

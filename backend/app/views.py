@@ -52,21 +52,14 @@ class RecipesList(viewsets.ModelViewSet):
         is_favorited = int(is_favorited)
         is_in_shopping_cart = int(is_in_shopping_cart)
         author = int(author)
-        curr_user = None
         recipes = Recipe.objects.all()
         recipes_count = Recipe.objects.count()
-        if is_favorited or is_in_shopping_cart:
-            curr_user = get_user(request)
-            if isinstance(curr_user, Response):
-                return curr_user
-        else:
-            curr_user = get_user(request, throw_exception=False)
 
-        if is_favorited:
+        if is_favorited and not isinstance(curr_user, Response):
             favorite = list(map(lambda x: x.recipe, Favorite.objects.filter(user=curr_user)))
             recipes = list(filter(lambda recipe: recipe in favorite, recipes))
             recipes_count = len(recipes)
-        if is_in_shopping_cart:
+        if is_in_shopping_cart and not isinstance(curr_user, Response):
             cart = list(map(lambda x: x.recipe, Cart.objects.filter(user=curr_user)))
             recipes = list(filter(lambda recipe: recipe in cart, recipes))
             recipes_count = len(recipes)
@@ -86,6 +79,8 @@ class RecipesList(viewsets.ModelViewSet):
                 del recipes[key]
                 continue
             user_ser = UserSerializer(rec_user).data
+            del user_ser['password']
+            del user_ser['last_login']
             recipes[key]['author'] = user_ser
             if not (curr_user is None):
                 if Subscribe.objects.filter(user=curr_user, subscribe_id=recipes[key]['author']['id']).exists():
@@ -145,6 +140,8 @@ class RecipesList(viewsets.ModelViewSet):
             return Response({"detail": 'Страница не найдена.'}, 404)
         rec_user = rec_user[0]
         user_ser = UserSerializer(rec_user).data
+        del user_ser['password']
+        del user_ser['last_login']
         user_ser['is_subscribed'] = Subscribe.objects.filter(user=user, subscribe=rec_user).exists()
         recipe['author'] = user_ser
         if not (user is None):
@@ -234,6 +231,8 @@ class RecipesList(viewsets.ModelViewSet):
         recipe = serializer.data
         user_ser = UserSerializer(user).data
         user_ser['is_subscribed'] = False
+        del user_ser['password']
+        del user_ser['last_login']
         recipe['author'] = user_ser
         if not (user is None):
             if Subscribe.objects.filter(user=user, subscribe_id=recipe['author']['id']).exists():
@@ -268,8 +267,13 @@ class RecipesList(viewsets.ModelViewSet):
         return Response(recipe, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
+        user = get_user(request)
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        if isinstance(user, Response):
+            return user
+        if user.pk != instance.author.pk:
+            return Response({"detail": 'У вас недостаточно прав для выполнения данного действия.'}, 403)
         data = request.data
         try:
             data['ingredients'] = json.dumps(data['ingredients'])
@@ -284,11 +288,6 @@ class RecipesList(viewsets.ModelViewSet):
             image = None
         serializer = self.get_serializer(instance, data=data, partial=partial)
         serializer.is_valid(raise_exception=True)
-        user = get_user(request)
-        if isinstance(user, Response):
-            return user
-        if user.pk != instance.author_id:
-            Response({"detail": 'У вас недостаточно прав для выполнения данного действия.'}, 403)
         ingredients = json.loads(data['ingredients'])
         if not ingredients:
             return Response({'ingredients': ['Ингредиенты отсутствуют']}, 400)
@@ -327,6 +326,8 @@ class RecipesList(viewsets.ModelViewSet):
         recipe = self.get_serializer(instance).data
         user_ser = UserSerializer(user).data
         user_ser['is_subscribed'] = False
+        del user_ser['password']
+        del user_ser['last_login']
         recipe['author'] = user_ser
         if not (user is None):
             if Subscribe.objects.filter(user=user, subscribe_id=recipe['author']['id']).exists():
@@ -493,6 +494,8 @@ class UsersList(viewsets.ModelViewSet):
                     users[key]['is_subscribed'] = True
             if "is_subscribed" not in users[key]:
                 users[key]['is_subscribed'] = False
+            del users[key]['password']
+            del users[key]['last_login']
 
         next_page = page + 1 if users_count - (page + 1) * limit >= 0 else page
         prev_page = page - 1 if page > 1 else 1
@@ -510,7 +513,7 @@ class UsersList(viewsets.ModelViewSet):
         try:
             instance = self.get_object()
         except Http404:
-            return Response({"detail": "Страница не найдена."}, 401)
+            return Response({"detail": "Страница не найдена."}, 404)
 
         serializer = self.get_serializer(instance)
         data = serializer.data
@@ -520,6 +523,10 @@ class UsersList(viewsets.ModelViewSet):
                 data["is_subscribed"] = True
         if "is_subscribed" not in data:
             data["is_subscribed"] = False
+
+
+        del data['password']
+        del data['last_login']
 
         return Response(data, 200)
 
@@ -537,7 +544,10 @@ class UsersList(viewsets.ModelViewSet):
         data['password'] = make_password(data['password'])
         user = User(**data)
         user.save()
+        data['id'] = user.pk
         del data['password']
+        del data['last_login']
+        del data['avatar']
         return Response(data, status=status.HTTP_201_CREATED)
 
     @action(methods=['get'], detail=False, url_path='me')
@@ -548,6 +558,8 @@ class UsersList(viewsets.ModelViewSet):
         serializer = self.get_serializer(user)
         data = serializer.data
         data['is_subscribed'] = False
+        del data['password']
+        del data['last_login']
         return Response(data, 200)
 
     @action(methods=['put', 'delete'], detail=False, url_path='me/avatar')
@@ -627,6 +639,10 @@ class UsersList(viewsets.ModelViewSet):
                 return Response({
                     "detail": "Вы уже подписаны на этого пользователя"
                 }, 400)
+            if sub_user.pk == user.pk:
+                return Response({
+                    "detail": "Вы не можете подписаться на себя."
+                }, 400)
             subscribe = Subscribe(user=user, subscribe=sub_user)
             subscribe.save()
 
@@ -646,6 +662,9 @@ class UsersList(viewsets.ModelViewSet):
                 }
             data['recipes_count'] = recipes_count
             data['recipes'] = recipes
+
+            del data['password']
+            del data['last_login']
 
             return Response(data, 201)
         elif request.method == 'DELETE':
@@ -680,6 +699,8 @@ class UsersList(viewsets.ModelViewSet):
         users = serializer.data
         for key in range(0, len(users)):
             users[key]['is_subscribed'] = True
+            del users[key]['password']
+            del users[key]['last_login']
             recipes = Recipe.objects.filter(author_id=users[key]['id'])[::-1]
             recipes_count = len(recipes)
             if len(recipes) > recipes_limit:
@@ -710,9 +731,12 @@ def login(request):
     data = request.data
     try:
         email = data['email']
+    except KeyError:
+        return Response({"email": ["Введите почту."]}, 400)
+    try:
         password = data['password']
     except KeyError:
-        return Response({"detail": "Неверные данные"}, 401)
+        return Response({"password": ["Введите пароль."]}, 400)
 
     if User.objects.filter(email=email).exists():
         user = User.objects.get(email=email)
@@ -721,7 +745,7 @@ def login(request):
                 Token.objects.get(user=user).delete()
             token = Token.objects.create(user=user)
             return Response({"auth_token": token.key}, 200)
-    return Response({"detail": "Неверные данные"}, 401)
+    return Response({"detail": "Неверные данные"}, 400)
 
 
 @api_view(['POST'])

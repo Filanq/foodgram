@@ -57,6 +57,10 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'foodgram.urls'
 
+CSRF_COOKIE_NAME = 'csrftoken'
+
+CSRF_HEADER_NAME = 'CSRF_COOKIE'
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
